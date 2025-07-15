@@ -5,22 +5,30 @@ namespace Tablize;
 public record Table
 {
 	public string Name { get; set; } = string.Empty;
-	public bool ShowTableName { get; set; }
-	public bool ShowColumnNames { get; set; }
+	public bool ShowTableName { get; set; } = true;
+	public bool ShowColumnNames { get; set; } = true;
 	// Key is ColumnIndex
-	public Dictionary<int, Column> Columns { get; set; } = [];
+	internal Dictionary<int, Column> Columns { get; set; } = [];
 	// <RowIndex, <ColumnIndex, Cell Value>
-	public Dictionary<int, Dictionary<int, string>> Rows { get; set; } = [];
+	//internal Dictionary<int, Dictionary<int, string>> Rows { get; set; } = [];
+	internal List<List<string>> Rows { get; set; } = [];
+	internal List<List<object>> UserData { get; set; } = [];
+	public BorderCharSet? BorderCharSet { get; set; } = BorderCharSet.Single;
+
+	internal int Width => Columns.Sum(x => x.Value.Width);
 }
 
 public record Column
 {
 	public string Name { get; set; } = string.Empty;
-	public int Width { get; set; } // includes padding
-	public int PaddingLeft { get; set; }
-	public int PaddingRight { get; set; }
-	public int Padding => PaddingLeft + PaddingRight;
-	public Align Align { get; set; }
+	public Align Align { get; set; } = Align.Left;
+	public int PaddingLeft { get; set; } = 1;
+	public int PaddingRight { get; set; } = 1;
+
+	// @TODO: max width
+
+	internal int Width { get; set; } = 0; // includes padding
+	internal int Padding => PaddingLeft + PaddingRight;
 }
 
 public enum Align
@@ -30,19 +38,43 @@ public enum Align
 	Center
 }
 
+public record Border(string value);
+
+public record BorderCharSet(
+	char HorizontalLine,
+	char VerticalLine,
+	char CornerUL,
+	char CornerUR,
+	char CornerLL,
+	char CornerLR,
+	char HorizontalIntersectionUp,
+	char HorizontalIntersectionDown,
+	char VerticalIntersectionRight,
+	char VerticalIntersectionLeft,
+	char Intersection)
+{
+	public static BorderCharSet Empty => new(
+		' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ');
+
+	public static BorderCharSet Single => new(
+		'─', '│', '┌', '┐', '└', '┘', '┴', '┬', '├', '┤', '┼');
+
+	public static BorderCharSet Double => new(
+		'═', '║', '╔', '╗', '╚', '╝', '╩', '╦', '╠', '╣', '╬');
+}
+
 public static class Tablizer
 {
-	public static Table CreateTable(
-		string name,
-		bool showName,
-		bool showColumnNames)
+	public static Table SetColumns(this Table table, List<Column> columns)
 	{
-		return new()
+		table.Columns.Clear();
+
+		for (int i = 0; i < columns.Count; i++)
 		{
-			Name = name,
-			ShowTableName = showName,
-			ShowColumnNames = showColumnNames
-		};
+			table.Columns.Add(i, columns[i]);
+		}
+
+		return table.SetData(table.UserData);
 	}
 
 	public static Table SetData<T>(this Table table, Dictionary<string, T> data)
@@ -58,45 +90,53 @@ public static class Tablizer
 
 	public static Table SetData(this Table table, List<List<object>> rows)
 	{
-		table.Columns.Clear();
+		table.UserData = rows;
 		table.Rows.Clear();
+
+		if (rows.Count == 0) return table;
+
+		// pre-process
+		foreach (var row in rows)
+		{
+			for (int k = 0; k < row.Count; k++)
+			{
+				// use default if columns not set
+				if (!table.Columns.TryGetValue(k, out var column))
+				{
+					column = new();
+					table.Columns.Add(k, column);
+				}
+			}
+		}
+
+		// set headers
+		if (table.ShowTableName)
+		{
+		}
+
 		for (int i = 0; i < rows.Count; i++)
 		{
-			if (!table.Rows.TryGetValue(i, out var cellDict))
-			{
-				cellDict = [];
-				table.Rows.Add(i, cellDict);
-			}
+			var rowValues = new List<string>();
 
 			var row = rows[i];
 			for (int k = 0; k < row.Count; k++)
 			{
-				if (!table.Columns.TryGetValue(k, out var column))
-				{
-					column = new()
-					{
-						// @TODO: column settings: Name, Padding, Align
-						Name = k.ToString(),
-						Width = 0,
-						PaddingLeft = 1,
-						PaddingRight = 1,
-						Align = Align.Left,
-					};
-					table.Columns.Add(k, column);
-				}
-
+				var column = table.Columns[k];
 				var cell = row[k];
-				// @TODO: for now just doing .ToString() to get all values
+
+				// @TODO: formatters. for now .ToString() to get all values
 				var value = cell.ToString() ?? string.Empty;
 
-				// @TODO: Width needs to take into account column.Name
+				// @TODO: Width needs to take into account column.Name and MaxWidth
 				if (value.Length > column.Width - column.Padding)
 				{
 					column.Width = value.Length + column.Padding;
 				}
 
-				cellDict.Add(k, value);
+				rowValues.Add(value);
 			}
+
+			table.Rows.Add(rowValues);
 		}
 
 		return table;
@@ -123,12 +163,13 @@ public static class Tablizer
 			lines.Add(sb.ToString());
 		}
 
-		foreach (var (i, row) in table.Rows)
+		foreach (var rowValues in table.Rows)
 		{
 			var sb = new StringBuilder();
-			foreach (var (k, value) in row)
+			for (int i = 0; i < rowValues.Count; i++)
 			{
-				var column = table.Columns[k];
+				var value = rowValues[i];
+				var column = table.Columns[i];
 				sb.Append(PadValue(value, column));
 			}
 			lines.Add(sb.ToString());
@@ -136,25 +177,32 @@ public static class Tablizer
 		return lines;
 	}
 
-	private static string PadValue(string value, Column column)
-	{
-		var valueWidth = column.Width - column.Padding;
+	private static string PadValue(string value, Column column) =>
+		PadValue(value, column.Width, column.PaddingLeft, column.PaddingRight, column.Align);
 
-		value = column.Align switch
+	private static string PadValue(
+		string value,
+		int width,
+		int paddingLeft,
+		int paddingRight,
+		Align align,
+		char paddingChar = ' ')
+	{
+		var valueWidth = width - paddingLeft - paddingRight;
+
+		value = align switch
 		{
 			Align.Left => value.PadRight(valueWidth),
-			Align.Center => value.PadRight(valueWidth), // @TODO
+			Align.Center => value.PadLeft(valueWidth / 2 - value.Length / 2).PadRight(valueWidth),
 			Align.Right => value.PadLeft(valueWidth),
-			_ => throw new Exception($"unknown column.Align: {column.Align}")
+			_ => throw new Exception($"unknown column.Align: {align}")
 		};
 
-		return column.GetPaddingLeft() + value + column.GetPaddingRight();
+		return GetPadding(paddingLeft, paddingChar) + value + GetPadding(paddingRight, paddingChar);
 	}
 
-	private static string GetPaddingLeft(this Column column) => GetPadding(column.PaddingLeft);
-	private static string GetPaddingRight(this Column column) => GetPadding(column.PaddingRight);
-	private static string GetPadding(int padding)
+	private static string GetPadding(int padding, char paddingChar = ' ')
 	{
-		return new string([.. Enumerable.Repeat(' ', padding)]);
+		return new string([.. Enumerable.Repeat(paddingChar, padding)]);
 	}
 }

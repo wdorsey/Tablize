@@ -14,9 +14,14 @@ var stringDict = new Dictionary<string, string>
 	{ "Demon", "Slayer" }
 };
 
-var table = Tablizer.CreateTable("stringDict", true, true)
-	.SetData(stringDict);
-
+var table = new Table
+{
+	Name = "stringDict"
+}.SetColumns(
+[
+	new Column { Name = "Key" },
+	new Column { Name = "Value" }
+]).SetData(stringDict);
 
 Console.WriteLine(table.ToJson(true));
 
