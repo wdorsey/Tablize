@@ -16,11 +16,11 @@ var stringDict = new Dictionary<string, string>
 
 var table = new Table
 {
-	Name = "stringDict"
+	Name = "SUperduperlongnamingway Table"
 }.SetColumns(
 [
 	new Column { Name = "Key" },
-	new Column { Name = "Value" }
+	new Column { Name = "Value", MaxWidth = 10, Align = Align.Right }
 ]).SetData(stringDict);
 
 Console.WriteLine(table.ToJson(true));

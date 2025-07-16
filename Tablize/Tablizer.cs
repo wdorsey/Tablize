@@ -11,16 +11,14 @@ public record Table
 	public bool HasBorders => BorderCharSet != null;
 
 	// Key is ColumnIndex
-	internal Dictionary<int, Column> Columns { get; } = [];
-	internal List<List<string>> Rows { get; } = [];
+	public Dictionary<int, Column> Columns { get; } = [];
+	public List<List<Cell>> Rows { get; } = [];
 	internal List<List<object>> UserRows { get; } = [];
 	internal List<List<string>> FormattedRows { get; } = [];
 	internal List<string> Lines { get; } = [];
-	// Key is the index within the row
-	internal List<Dictionary<int, BorderIntersection>> Intersections { get; } = [];
 
-	internal int TotalColumnWidth => Columns.Sum(x => x.Value.Width);
-	internal int Width => TotalColumnWidth + (HasBorders ? 1 + Columns.Count : 0);
+	public int TotalColumnWidth => Columns.Sum(x => x.Value.Width);
+	public int Width => TotalColumnWidth + (HasBorders ? 1 + Columns.Count : 0);
 }
 
 public record Column
@@ -31,9 +29,9 @@ public record Column
 	public int PaddingRight { get; set; } = 1;
 	public int? MaxWidth { get; set; } // includes padding, not borders
 
-	internal int ContentWidth { get; set; }
-	internal int Width => ContentWidth + Padding;
-	internal int Padding => PaddingLeft + PaddingRight;
+	public int ContentWidth { get; internal set; }
+	public int Width => ContentWidth + Padding;
+	public int Padding => PaddingLeft + PaddingRight;
 }
 
 public enum Align
@@ -43,12 +41,17 @@ public enum Align
 	Center
 }
 
-internal record BorderIntersection
+public record Cell(string Value, Border Border);
+
+[Flags]
+public enum Border
 {
-	public bool Up;
-	public bool Down;
-	public bool Left;
-	public bool Right;
+	None = 0,
+	Top = 1 << 0,
+	Bottom = 1 << 1,
+	Left = 1 << 2,
+	Right = 1 << 3,
+	All = 1 << 4
 }
 
 public record BorderCharSet(
@@ -128,8 +131,8 @@ public static class Tablizer
 				if (value.Length > column.ContentWidth)
 				{
 					column.ContentWidth = value.Length;
-					if (column.MaxWidth.HasValue && column.MaxWidth < column.Width)
-						column.ContentWidth = column.MaxWidth.Value - column.Padding;
+					if (column.MaxWidth.HasValue && column.MaxWidth < column.ContentWidth)
+						column.ContentWidth = column.MaxWidth.Value;
 				}
 
 				formattedRow.Add(value);
@@ -140,89 +143,44 @@ public static class Tablizer
 		// header rows
 		if (table.ShowTableName)
 		{
-			var width = table.HasBorders ? table.Width - 2 : table.Width;
+			var width = (table.HasBorders ? table.Width - 2 : table.Width) - 2;
+
 			var value = GetCellValue(
 				table.Name,
 				width,
 				width,
 				1, 1, Align.Left);
-			table.Rows.Add([value]);
 
-			// borders
-			var top = new Dictionary<int, BorderIntersection>
-			{
-				{ 0, new BorderIntersection {Down = true, Right = true} },
-				{ table.Width - 1, new BorderIntersection {Down = true, Left = true} },
-			};
-			var bottom = new Dictionary<int, BorderIntersection>
-			{
-				{ 0, new BorderIntersection {Up = true, Right = true} },
-				{ table.Width - 1, new BorderIntersection {Up = true, Left = true} },
-			};
-			table.Intersections.Add(top);
-			table.Intersections.Add(bottom);
+			table.Rows.Add([new(value, Border.All)]);
 		}
 
 		if (table.ShowColumnNames)
 		{
-			var row = new List<string>();
-			var idx = 0;
+			var row = new List<Cell>();
 			foreach (var (_, column) in table.Columns)
 			{
 				var value = GetCellValue(column.Name, column);
-				row.Add(value);
+				row.Add(new(value, Border.All));
 			}
 			table.Rows.Add(row);
 		}
 
 		// data rows
-		foreach (var row in table.FormattedRows)
+		for (int i = 0; i < table.FormattedRows.Count; i++)
 		{
-			var rowValues = new List<string>();
+			var row = table.FormattedRows[i];
+			var rowValues = new List<Cell>();
 			for (int k = 0; k < row.Count; k++)
 			{
-				var value = row[k];
+				var rowValue = row[k];
 				var col = table.Columns[k];
-				rowValues.Add(GetCellValue(value, col));
+				var value = GetCellValue(rowValue, col);
+				var border = Border.Left | Border.Right;
+				if (i == 0) border |= Border.Top;
+				if (i == table.FormattedRows.Count - 1) border |= Border.Bottom;
+				rowValues.Add(new(value, border));
 			}
 			table.Rows.Add(rowValues);
-		}
-
-		// borders
-		if (table.HasBorders && table.Rows.Count > 0)
-		{
-			// result will be the new table.Rows
-			var horizontalBorders = new List<string>();
-			var charset = table.BorderCharSet!;
-
-			foreach (var row in table.Intersections)
-			{
-				var sb = new StringBuilder();
-				var prev = 0;
-				foreach (var (i, intersection) in row)
-				{
-					sb.Append(new string([.. Enumerable.Repeat(charset.HorizontalLine, i - prev)]));
-					sb.Append(GetChar(intersection, charset));
-					prev = i;
-				}
-				horizontalBorders.Add(sb.ToString());
-			}
-
-			var borderIndex = 1;
-			table.Lines.Add(horizontalBorders.First());
-			foreach (var row in table.Rows)
-			{
-				var sb = new StringBuilder();
-				foreach (var cell in row)
-				{
-					sb.Append(charset.VerticalLine);
-					sb.Append(cell);
-				}
-				sb.Append(charset.VerticalLine);
-				table.Lines.Add(sb.ToString());
-				if (horizontalBorders.Count > borderIndex)
-					table.Lines.Add(horizontalBorders[borderIndex++]);
-			}
 		}
 
 		return table;
@@ -230,7 +188,123 @@ public static class Tablizer
 
 	public static List<string> GetLines(this Table table)
 	{
-		return [.. table.Lines];
+		var lines = new List<string>();
+
+		if (table.HasBorders)
+		{
+			var firstPassLines = new List<(string Value, bool IsBorder)>();
+			var chars = table.BorderCharSet!;
+			foreach (var row in table.Rows)
+			{
+				var sbBorderTop = new StringBuilder();
+				var sb = new StringBuilder();
+				var sbBorderBottom = new StringBuilder();
+				foreach (var cell in row)
+				{
+					if (cell.Border.IsEqual(Border.Left))
+					{
+						if (sb.Length == 0 || sb[^1] != chars.VerticalLine)
+						{
+							sbBorderTop.Append(' ');
+							sbBorderBottom.Append(' ');
+							sb.Append(chars.VerticalLine);
+						}
+					}
+
+					if (cell.Border.IsEqual(Border.Top))
+					{
+						sbBorderTop.Append(Enumerable.Repeat(chars.HorizontalLine, cell.Value.Length).GetString());
+					}
+
+					if (cell.Border.IsEqual(Border.Bottom))
+					{
+						sbBorderBottom.Append(Enumerable.Repeat(chars.HorizontalLine, cell.Value.Length).GetString());
+					}
+
+					sb.Append(cell.Value);
+
+					if (cell.Border.IsEqual(Border.Right))
+					{
+						sbBorderTop.Append(' ');
+						sbBorderBottom.Append(' ');
+						sb.Append(chars.VerticalLine);
+					}
+				}
+
+				var top = sbBorderTop.ToString();
+				var cells = sb.ToString();
+				var bottom = sbBorderBottom.ToString();
+
+				if (!string.IsNullOrWhiteSpace(top))
+					firstPassLines.Add((top, true));
+				firstPassLines.Add((cells, false));
+				if (!string.IsNullOrWhiteSpace(bottom))
+					firstPassLines.Add((bottom, true));
+			}
+
+			// fix borders
+			var prevLine = new List<char>();
+			for (int i = 0; i < firstPassLines.Count; i++)
+			{
+				var (value, isBorder) = firstPassLines[i];
+
+				if (!isBorder)
+				{
+					prevLine = [.. value];
+					lines.Add(value);
+					continue;
+				}
+
+				// skip the duped horizontal border lines
+				var nextLineIsBorder = i < firstPassLines.Count - 1 && firstPassLines[i + 1].IsBorder;
+				if (nextLineIsBorder) continue;
+
+				var nextLine = i < firstPassLines.Count - 1 ? firstPassLines[i + 1].Value.ToList() : [];
+				var sb = new StringBuilder();
+				var prev = '0';
+				for (int k = 0; k < value.Length; k++)
+				{
+					var c = value[k];
+					char? next = k < value.Length - 1 ? value[k + 1] : null;
+					char? prevLineChar = k < prevLine.Count ? prevLine[k] : null;
+					char? nextLineChar = k < nextLine.Count ? nextLine[k] : null;
+					if (c == ' ')
+					{
+						if (prev == chars.HorizontalLine && next == chars.HorizontalLine &&
+							prevLineChar == chars.VerticalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.Intersection; }
+						else if (prev == chars.HorizontalLine && next == chars.HorizontalLine && prevLineChar == chars.VerticalLine)
+						{ c = chars.HorizontalIntersectionUp; }
+						else if (prev == chars.HorizontalLine && next == chars.HorizontalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.HorizontalIntersectionDown; }
+						else if (next == chars.HorizontalLine && prevLineChar == chars.VerticalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.VerticalIntersectionRight; }
+						else if (prev == chars.HorizontalLine && prevLineChar == chars.VerticalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.VerticalIntersectionLeft; }
+						else if (next == chars.HorizontalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.CornerUL; }
+						else if (next == chars.HorizontalLine && prevLineChar == chars.VerticalLine)
+						{ c = chars.CornerLL; }
+						else if (prev == chars.HorizontalLine && nextLineChar == chars.VerticalLine)
+						{ c = chars.CornerUR; }
+						else { c = chars.CornerLR; }
+					}
+
+					sb.Append(c);
+					prev = c;
+				}
+
+				prevLine = [.. value];
+
+				lines.Add(sb.ToString());
+			}
+		}
+		else
+		{
+			lines = [.. table.Rows.Select(x => string.Join(string.Empty, x.Select(c => c.Value)))];
+		}
+
+		return lines;
 	}
 
 	private static string GetCellValue(string value, Column column) =>
@@ -245,11 +319,13 @@ public static class Tablizer
 		Align align,
 		char paddingChar = ' ')
 	{
-		var padding = paddingLeft + paddingRight;
-		if (maxWidth.HasValue && contentWidth > maxWidth - padding)
+		if (maxWidth.HasValue && value.Length > maxWidth)
 		{
-			value = new string([.. value.Take(maxWidth.Value - padding)]);
+			contentWidth = maxWidth.Value;
+			value = new string([.. value.Take(contentWidth)]);
 		}
+
+		Console.WriteLine($"max = {maxWidth}, contentWidth = {contentWidth} => value.length = {value.Length}");
 
 		value = align switch
 		{
@@ -262,32 +338,16 @@ public static class Tablizer
 		return GetPadding(paddingLeft, paddingChar) + value + GetPadding(paddingRight, paddingChar);
 	}
 
+	private static bool IsEqual(this Border value, Border check)
+	{
+		return (value & check) == check ||
+			(value & Border.All) == Border.All;
+	}
+
 	private static string GetPadding(int padding, char paddingChar = ' ')
 	{
-		return new string([.. Enumerable.Repeat(paddingChar, padding)]);
+		return Enumerable.Repeat(paddingChar, padding).GetString();
 	}
 
-	private static char GetChar(BorderIntersection i, BorderCharSet charset)
-	{
-		if (i.Up && i.Down && i.Left && i.Right)
-			return charset.Intersection;
-		if (i.Up && i.Down && i.Left)
-			return charset.VerticalIntersectionLeft;
-		if (i.Up && i.Down && i.Right)
-			return charset.VerticalIntersectionRight;
-		if (i.Up && i.Left && i.Right)
-			return charset.HorizontalIntersectionUp;
-		if (i.Down && i.Left && i.Right)
-			return charset.HorizontalIntersectionDown;
-		if (i.Up && i.Left)
-			return charset.CornerLR;
-		if (i.Up && i.Right)
-			return charset.CornerLL;
-		if (i.Down && i.Left)
-			return charset.CornerUR;
-		if (i.Down && i.Right)
-			return charset.CornerUL;
-
-		throw new Exception($"unhandled intersection: Up:{i.Up} Down:{i.Down} Left:{i.Left} Right:{i.Right}");
-	}
+	private static string GetString(this IEnumerable<char> chars) => new([.. chars]);
 }
