@@ -8,15 +8,29 @@ public record Table
 	public bool ShowTableName { get; set; } = true;
 	public Align NameHeaderAlignment { get; set; } = Align.Left;
 	public bool ShowColumnNames { get; set; } = true;
-	public bool NoBorders { get; set; } = false;
+	/// <summary>
+	/// Toggles all borders on or off
+	/// </summary>
+	public bool ShowBorders { get; set; } = true;
+	public Border CellBorders { get; set; } = Border.Left | Border.Right;
 	public BorderCharSet BorderCharSet { get; set; } = BorderCharSet.Single;
+
+	internal Dictionary<Type, Formatter> Formatters { get; } = new()
+	{
+		{ typeof(object), Tablize.Formatters.Default },
+		{ typeof(short), Tablize.Formatters.Short },
+		{ typeof(int), Tablize.Formatters.Int },
+		{ typeof(long), Tablize.Formatters.Long },
+		{ typeof(double), Tablize.Formatters.Double },
+		{ typeof(decimal), Tablize.Formatters.Decimal },
+	};
 
 	public int Width { get; internal set; }
 
-	// Key is ColumnIndex
+	// Key is ColumnNumber
 	internal Dictionary<int, Column> ColumnLookup { get; } = [];
-	internal List<List<Cell>> Rows { get; } = [];
-	internal List<List<TableValue>> UserRows { get; } = [];
+	internal List<Row> Rows { get; } = [];
+	internal List<List<object?>> UserRows { get; } = [];
 	internal List<List<string>> FormattedRows { get; } = [];
 
 	public List<Column> Columns => [.. ColumnLookup.Values];
@@ -24,15 +38,27 @@ public record Table
 
 public record Column
 {
-	public int ColumnIndex { get; internal set; }
+	public int ColumnNumber { get; internal set; }
 	public string Name { get; set; } = string.Empty;
-	public Align NameHeaderAlignment { get; set; } = Align.Left;
+	public Align NameHeaderAlignment { get; set; } = Align.Center;
 	public Align? Alignment { get; set; }
+	internal Align? AlignmentByValue { get; set; } // internal Alignment tracked by the Type of value
+	public Formatter? Formatter { get; set; }
 	public int PaddingLeft { get; set; } = 1;
 	public int PaddingRight { get; set; } = 1;
-	public char PaddingChar { get; set; } = ' ';
 
-	public Border Border { get; set; } = Border.Left | Border.Right;
+	/// <summary>
+	/// Char to use for <see cref="PaddingLeft"/>
+	/// </summary>
+	public char PaddingLeftChar { get; set; } = ' ';
+	/// <summary>
+	/// Char to use for <see cref="PaddingRight"/>
+	/// </summary>
+	public char PaddingRightChar { get; set; } = ' ';
+	/// <summary>
+	/// Char to use to for padding the Cell values
+	/// </summary>
+	public char ValuePadChar { get; set; } = ' ';
 
 	/// <summary>
 	/// Min Inner/ContentWidth, does not include padding or borders
@@ -52,13 +78,13 @@ public record Column
 	public int Padding => PaddingLeft + PaddingRight;
 }
 
+public record Row(int RowNumber, List<Cell> Cells);
+
 public record Cell(string Value, Border Border)
 {
 	public string Value { get; set; } = Value;
 	public Border Border { get; set; } = Border;
 }
-
-public record TableValue(string Value, Type Type);
 
 public enum Align
 {
@@ -76,6 +102,19 @@ public enum Border
 	Left = 1 << 2,
 	Right = 1 << 3,
 	All = 1 << 4
+}
+
+public record Formatter(Func<object, string> FormatFn, Align Alignment);
+
+public static class Formatters
+{
+	// pre-defined Formatters only exist for types that require something other than .ToString() and Align.Left
+	public static Formatter Default { get; } = new(x => x?.ToString() ?? string.Empty, Align.Left);
+	public static Formatter Short { get; } = new(x => Convert.ToInt16(x).ToString("N0"), Align.Right);
+	public static Formatter Int { get; } = new(x => Convert.ToInt32(x).ToString("N0"), Align.Right);
+	public static Formatter Long { get; } = new(x => Convert.ToInt64(x).ToString("N0"), Align.Right);
+	public static Formatter Double { get; } = new(x => Convert.ToDouble(x).ToString("N2"), Align.Right);
+	public static Formatter Decimal { get; } = new(x => Convert.ToDecimal(x).ToString("N2"), Align.Right);
 }
 
 public record BorderCharSet(
@@ -103,11 +142,19 @@ public record BorderCharSet(
 
 public static class Tablizer
 {
-	public static TableValue Value<T>(this Table table, T? value)
+	public static Table AddFormatter(this Table table, Formatter formatter, Type type)
 	{
-		// @TODO: formatters
-		var type = value?.GetType() ?? typeof(string);
-		return new(value?.ToString() ?? string.Empty, type);
+		table.Formatters[type] = formatter;
+		return table;
+	}
+
+	public static Table AddFormatters(this Table table, List<(Formatter Formatter, Type Type)> formatters)
+	{
+		foreach (var (f, t) in formatters)
+		{
+			table.AddFormatter(f, t);
+		}
+		return table;
 	}
 
 	public static Table SetColumns(this Table table, List<Column> columns)
@@ -117,8 +164,9 @@ public static class Tablizer
 		for (int i = 0; i < columns.Count; i++)
 		{
 			var col = columns[i];
+			col.ColumnNumber = i + 1;
 			col.InnerWidth = col.Name.Length;
-			table.ColumnLookup.Add(i, col);
+			table.ColumnLookup.Add(col.ColumnNumber, col);
 		}
 
 		return table.SetData(table.UserRows);
@@ -126,22 +174,17 @@ public static class Tablizer
 
 	public static Table SetData<T>(this Table table, Dictionary<string, T> data)
 	{
-		var rows = new List<List<TableValue>>();
+		var rows = new List<List<object?>>();
 
 		foreach (var (k, v) in data)
 		{
-			rows.Add([table.Value(k), table.Value(v)]);
+			rows.Add([k, v]);
 		}
 
 		return table.SetData(rows);
 	}
 
-	public static Table SetData(this Table table, List<List<object>> rows)
-	{
-		return table.SetData([.. rows.Select(x => x.Select(obj => table.Value(obj)).ToList())]);
-	}
-
-	public static Table SetData(this Table table, List<List<TableValue>> rows)
+	public static Table SetData(this Table table, List<List<object?>> rows)
 	{
 		table.UserRows.Clear();
 		table.FormattedRows.Clear();
@@ -158,47 +201,64 @@ public static class Tablizer
 			var formattedRow = new List<string>();
 			for (int k = 0; k < row.Count; k++)
 			{
-				// use default if columns not set
-				if (!table.ColumnLookup.TryGetValue(k, out var column))
+				// use default if column not set
+				if (!table.ColumnLookup.TryGetValue(k + 1, out var col))
 				{
-					column = new();
-					table.ColumnLookup.Add(k, column);
+					col = new()
+					{
+						ColumnNumber = k + 1
+					};
+					table.ColumnLookup.Add(col.ColumnNumber, col);
 				}
-
-				column.ColumnIndex = k;
 
 				var value = row[k];
 
-				if (value.Value.Length > column.InnerWidth)
+				// get formatter
+				var val = string.Empty;
+				if (value != null)
 				{
-					column.InnerWidth = value.Value.Length;
+					var formatter = col.Formatter;
+					if (formatter == null)
+					{
+						formatter = table.Formatters.TryGetValue(value.GetType(), out var f)
+							? formatter = f
+							: Formatters.Default;
+					}
 
-					if (column.MaxWidth.HasValue && column.MaxWidth < column.InnerWidth)
-						column.InnerWidth = column.MaxWidth.Value;
+					val = formatter.FormatFn(value);
+
+					if (col.AlignmentByValue == null)
+						col.AlignmentByValue = formatter.Alignment;
+					// mixed value Types, use default alignment of Left
+					else if (col.AlignmentByValue != formatter.Alignment)
+						col.AlignmentByValue = Align.Left;
 				}
 
-				if (column.MinWidth.HasValue && column.InnerWidth < column.MinWidth)
-					column.InnerWidth = column.MinWidth.Value;
+				if (val.Length > col.InnerWidth)
+				{
+					col.InnerWidth = val.Length;
 
-				// @TODO: auto-detect via value.Type
-				// Think value.Type should switch to Formatter
-				// and the formatter would have to default Align
-				column.Alignment ??= Align.Left;
+					if (col.MaxWidth.HasValue && col.MaxWidth < col.InnerWidth)
+						col.InnerWidth = col.MaxWidth.Value;
+				}
 
-				formattedRow.Add(value.Value);
+				if (col.MinWidth.HasValue && col.InnerWidth < col.MinWidth)
+					col.InnerWidth = col.MinWidth.Value;
+
+				formattedRow.Add(val);
 			}
 			table.FormattedRows.Add(formattedRow);
 		}
 
 		table.Width = table.ColumnLookup.Sum(x => x.Value.Width) +
-			(table.NoBorders ? 0 : BorderWidth([.. table.ColumnLookup.Values]));
+			(table.ShowBorders ? BorderWidth([.. table.ColumnLookup.Values], table.CellBorders) : 0);
 
 		// header rows
 		if (table.ShowTableName)
 		{
 			int paddingLeft = 1, paddingRight = 1;
 
-			var borderCount = table.NoBorders ? 0 : 2;
+			var borderCount = table.ShowBorders ? 2 : 0;
 
 			var headerWidth = table.Width - borderCount - paddingLeft - paddingRight;
 
@@ -206,71 +266,65 @@ public static class Tablizer
 				table.Name, headerWidth, headerWidth,
 				paddingLeft, paddingRight, table.NameHeaderAlignment);
 
-			table.Rows.Add([new(value, Border.All)]);
-
-			if (table.NoBorders)
-				table.Rows.Add([]);
+			table.Rows.Add(new(1, [new(value, Border.All)]));
 		}
 
 		if (table.ShowColumnNames)
 		{
-			var row = new List<Cell>();
+			var cells = new List<Cell>();
 			foreach (var (_, col) in table.ColumnLookup)
 			{
 				var value = GetCellValue(
 					col.Name, col.InnerWidth, col.MaxWidth,
 					col.PaddingLeft, col.PaddingRight, col.NameHeaderAlignment);
 
-				var border = table.NoBorders
-					? Border.None
-					: col.Border | Border.Top | Border.Bottom;
-
-				row.Add(new(value, border));
+				cells.Add(new(value, Border.All));
 			}
-			table.Rows.Add(row);
-
-			if (table.NoBorders)
-				table.Rows.Add([]);
+			table.Rows.Add(new(table.Rows.Count + 1, cells));
 		}
 
 		// data rows
 		for (int i = 0; i < table.FormattedRows.Count; i++)
 		{
 			var row = table.FormattedRows[i];
-			var rowValues = new List<Cell>();
+			var cells = new List<Cell>();
 			for (int k = 0; k < row.Count; k++)
 			{
 				var rowValue = row[k];
-				var col = table.ColumnLookup[k];
+				var col = table.ColumnLookup[k + 1];
 
-				var value = GetCellValue(rowValue, col);
+				var value = GetCellValue(
+					rowValue, col.InnerWidth, col.MaxWidth,
+					col.PaddingLeft, col.PaddingRight,
+					col.Alignment ?? col.Formatter?.Alignment ?? col.AlignmentByValue ?? Align.Left,
+					col.PaddingLeftChar, col.PaddingRightChar, col.ValuePadChar);
 
-				rowValues.Add(new(value, col.Border));
+				cells.Add(new(value, table.CellBorders));
 			}
-			table.Rows.Add(rowValues);
+			table.Rows.Add(new(table.Rows.Count + 1, cells));
 		}
 
 		// ensure outside of table has borders
-		if (table.Rows.Count > 0 && !table.NoBorders)
+		if (table.Rows.Count > 0 && table.ShowBorders)
 		{
 			var first = table.Rows.First();
-			foreach (var cell in first)
+			foreach (var cell in first.Cells)
 			{
 				cell.Border |= Border.Top;
 			}
 
 			var last = table.Rows.Last();
-			foreach (var cell in last)
+			foreach (var cell in last.Cells)
 			{
 				cell.Border |= Border.Bottom;
 			}
 
 			foreach (var row in table.Rows)
 			{
-				if (row.Count > 0)
+				if (row.Cells.Count > 0)
 				{
-					row.First().Border |= Border.Left;
-					row.Last().Border |= Border.Right;
+					row.Cells.First().Border |= Border.Left;
+					row.Cells.Last().Border |= Border.Right;
 				}
 			}
 		}
@@ -282,14 +336,13 @@ public static class Tablizer
 	{
 		var lines = new List<string>();
 
-		if (table.NoBorders)
-			return [.. table.Rows.Select(x => string.Join(string.Empty, x.Select(c => c.Value)))];
-
 		// all the code in this function is for displaying borders.
+		if (!table.ShowBorders)
+			return [.. table.Rows.Select(x => string.Join(string.Empty, x.Cells.Select(c => c.Value)))];
 
 		// the first-pass loop adds the "easy" borders in a dumb fashion.
-		// it blindly adds all the vertical and horizontal borders but 
-		// duplicates them and does not do intersections.
+		// it blindly adds all the vertical and horizontal borders which 
+		// duplicates some of them and does not include intersections.
 		// the second-pass will fix all of the dupes and add intersections.
 		var firstPassLines = new List<(string Value, bool IsBorder)>();
 		var chars = table.BorderCharSet;
@@ -298,7 +351,8 @@ public static class Tablizer
 			var sbBorderTop = new StringBuilder();
 			var sb = new StringBuilder();
 			var sbBorderBottom = new StringBuilder();
-			foreach (var cell in row)
+			var idx = 0;
+			foreach (var cell in row.Cells)
 			{
 				if (cell.Border.IsEqual(Border.Left))
 				{
@@ -307,26 +361,35 @@ public static class Tablizer
 						sbBorderTop.Append(' ');
 						sbBorderBottom.Append(' ');
 						sb.Append(chars.VerticalLine);
+						idx++;
 					}
 				}
 
 				if (cell.Border.IsEqual(Border.Top))
 				{
+					var diff = idx - sbBorderTop.Length;
+					if (diff > 0)
+						sbBorderTop.Append(Enumerable.Repeat(' ', diff).GetString());
 					sbBorderTop.Append(Enumerable.Repeat(chars.HorizontalLine, cell.Value.Length).GetString());
 				}
 
 				if (cell.Border.IsEqual(Border.Bottom))
 				{
+					var diff = idx - sbBorderBottom.Length;
+					if (diff > 0)
+						sbBorderBottom.Append(Enumerable.Repeat(' ', diff).GetString());
 					sbBorderBottom.Append(Enumerable.Repeat(chars.HorizontalLine, cell.Value.Length).GetString());
 				}
 
 				sb.Append(cell.Value);
+				idx += cell.Value.Length;
 
 				if (cell.Border.IsEqual(Border.Right))
 				{
 					sbBorderTop.Append(' ');
 					sbBorderBottom.Append(' ');
 					sb.Append(chars.VerticalLine);
+					idx++;
 				}
 			}
 
@@ -366,6 +429,8 @@ public static class Tablizer
 			var prev = '0';
 			for (int k = 0; k < value.Length; k++)
 			{
+				/* THAR BE DRAGONS */
+				// (it just works, move along)
 				var c = value[k];
 				char? next = k < value.Length - 1 ? value[k + 1] : null;
 				char? prevLineChar = k < prevLine.Count ? prevLine[k] : null;
@@ -389,7 +454,12 @@ public static class Tablizer
 					{ c = chars.CornerLL; }
 					else if (prev == chars.HorizontalLine && nextLineChar == chars.VerticalLine)
 					{ c = chars.CornerUR; }
-					else { c = chars.CornerLR; }
+					else if (prev == chars.HorizontalLine && prevLineChar == chars.VerticalLine)
+					{ c = chars.CornerLR; }
+					// else just stay as ' '
+
+					// debug
+					// Console.WriteLine($"{i}\t{value}: {next}\t{prev}\t{prevLineChar}\t{nextLineChar}\t => {c}\n");
 				}
 
 				sb.Append(c);
@@ -404,10 +474,6 @@ public static class Tablizer
 		return lines;
 	}
 
-	private static string GetCellValue(string value, Column col) => GetCellValue(
-		value, col.InnerWidth, col.MaxWidth,
-		col.PaddingLeft, col.PaddingRight, col.Alignment ?? Align.Left, col.PaddingChar);
-
 	private static string GetCellValue(
 		string value,
 		int contentWidth,
@@ -415,8 +481,12 @@ public static class Tablizer
 		int paddingLeft,
 		int paddingRight,
 		Align align,
-		char paddingChar = ' ')
+		char paddingLeftChar = ' ',
+		char paddingRightChar = ' ',
+		char valuePadChar = ' ')
 	{
+		// this function creates the exact final cell value trimming and padding
+		// based on widths and alignment.
 		if (maxWidth.HasValue && value.Length > maxWidth)
 		{
 			contentWidth = maxWidth.Value;
@@ -425,24 +495,25 @@ public static class Tablizer
 
 		value = align switch
 		{
-			Align.Left => value.PadRight(contentWidth),
-			Align.Center => value.PadLeft(value.Length + contentWidth / 2 - value.Length / 2).PadRight(contentWidth),
-			Align.Right => value.PadLeft(contentWidth),
+			Align.Left => value.PadRight(contentWidth, valuePadChar),
+			Align.Center => value.PadLeft(value.Length + contentWidth / 2 - value.Length / 2, valuePadChar).PadRight(contentWidth, valuePadChar),
+			Align.Right => value.PadLeft(contentWidth, valuePadChar),
 			_ => throw new Exception($"unknown column.Align: {align}")
 		};
 
-		return GetPadding(paddingLeft, paddingChar) + value + GetPadding(paddingRight, paddingChar);
+		return GetPadding(paddingLeft, paddingLeftChar) + value + GetPadding(paddingRight, paddingRightChar);
 	}
 
-	private static int BorderWidth(List<Column> cols)
+	private static int BorderWidth(List<Column> cols, Border cellBorders)
 	{
+		// assumes Table.HasBorder
 		// start width at 2 for outside table border
 		int width = 2;
 		var prevHadRightBorder = true;
 		foreach (var col in cols)
 		{
-			width += !prevHadRightBorder && col.Border.IsEqual(Border.Left) ? 1 : 0;
-			prevHadRightBorder = col.Border.IsEqual(Border.Right);
+			width += !prevHadRightBorder && cellBorders.IsEqual(Border.Left) ? 1 : 0;
+			prevHadRightBorder = cellBorders.IsEqual(Border.Right);
 			width += prevHadRightBorder ? 1 : 0;
 		}
 		if (prevHadRightBorder) width--;
@@ -455,7 +526,7 @@ public static class Tablizer
 			(value & Border.All) == Border.All;
 	}
 
-	private static string GetPadding(int padding, char paddingChar = ' ')
+	private static string GetPadding(int padding, char paddingChar)
 	{
 		return Enumerable.Repeat(paddingChar, padding).GetString();
 	}
