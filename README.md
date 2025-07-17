@@ -43,3 +43,4 @@ table.SetData([.. list.Select(x =>
 List<string> lines = table.GetLines();
 lines.ForEach(Console.WriteLine);
 ```
+<img width="315" height="135" alt="image" src="https://github.com/user-attachments/assets/1bd776a7-732b-4388-89b0-194f1c3371b2" />
