@@ -242,7 +242,7 @@ public static class Tablizer
 		}
 
 		// pre-processing loop:
-		//	set default columns
+		//  set default columns
 		//  find formatter and get cell value
 		//  figure out width of every column
 		foreach (var row in rows)
@@ -266,13 +266,8 @@ public static class Tablizer
 				var val = string.Empty;
 				if (value != null)
 				{
-					var formatter = col.Formatter;
-					if (formatter == null)
-					{
-						formatter = table.Formatters.TryGetValue(value.GetType(), out var f)
-							? formatter = f
-							: Formatters.Default;
-					}
+					var formatter = col.Formatter ??
+						(table.Formatters.TryGetValue(value.GetType(), out var fmt) ? fmt : Formatters.Default);
 
 					val = formatter.FormatFn(value);
 
@@ -536,8 +531,8 @@ public static class Tablizer
 		char paddingRightChar = ' ',
 		char valuePadChar = ' ')
 	{
-		// this function creates the exact final cell value, trimming and padding
-		// based on widths and alignment.
+		// this function creates the exact final cell value,
+		// trimming and padding based on widths and alignment.
 		if (maxWidth.HasValue && value.Length > maxWidth)
 		{
 			contentWidth = maxWidth.Value;
