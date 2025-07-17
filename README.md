@@ -22,7 +22,7 @@ table.SetColumns([
 // Dictionaries always create a 2-column table.
 table.SetData(new Dictionary<int, string> { { 1234, "John Smith" } });
 
-// Or set with a list, desired properties must be explicitly passed.
+// Or use a list. Desired properties must be explicitly passed.
 // Lists allow you to create as many columns are you want,
 // so let's add another column and throw in custom formatters.
 table.SetColumns([
