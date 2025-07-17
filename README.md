@@ -3,4 +3,43 @@ Turn any C# collection into a pretty ASCII table. Ideal for console applications
 
 <img width="787" height="210" alt="image" src="https://github.com/user-attachments/assets/9a75bead-102a-443c-985e-f02807bbbe81" />
 
-For some example usage, check out the [Console project](https://github.com/wdorsey/Tablize/blob/master/Tablize.Console/Program.cs).
+For example usage, check out the [Console project](https://github.com/wdorsey/Tablize/blob/master/Tablize.Console/Program.cs).
+
+## Quick Start
+```C#
+// create table
+var table = new Table { Name = "Customers" };
+
+// set columns (optional)
+table.SetColumns([
+	new Column { Name = "Id" },
+	new Column { Name = "Name" }]);
+
+// set data
+// A dictionary with any key/value types works.
+// Dictionaries always create a 2-column table.
+table.SetData(new Dictionary<int, string> { { 1234, "John Smith" } });
+
+// Or set with a list, desired properties must be explicitly passed.
+// Lists allow you to create as many columns are you want,
+// so let's add another column and throw in custom formatters.
+table.SetColumns([
+	new Column { Name = "Id", Formatter = new(x => Convert.ToInt32(x).ToString(), Align.Right) },
+	new Column { Name = "Name" },
+	new Column { Name = "SignupDate", Formatter = new(x => ((DateTime)x).ToString("MM/dd/yyyy")) }]);
+
+var list = new List<(int Id, string Name, DateTime SignupDate)>
+{
+	new(1234, "John Smith", DateTime.Now)
+};
+
+table.SetData([.. list.Select(x =>
+	new List<object?>
+	{
+		x.Id, x.Name, x.SignupDate
+	})]);
+
+// that's it, GetLines() and print it
+List<string> lines = table.GetLines();
+lines.ForEach(Console.WriteLine);
+```

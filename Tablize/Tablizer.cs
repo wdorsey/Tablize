@@ -104,7 +104,7 @@ public enum Border
 	All = 1 << 4
 }
 
-public record Formatter(Func<object, string> FormatFn, Align Alignment);
+public record Formatter(Func<object, string> FormatFn, Align Alignment = Align.Left);
 
 public static class Formatters
 {
@@ -172,7 +172,7 @@ public static class Tablizer
 		return table.SetData(table.UserRows);
 	}
 
-	public static Table SetData<T>(this Table table, Dictionary<string, T> data)
+	public static Table SetData<TKey, TValue>(this Table table, Dictionary<TKey, TValue> data) where TKey : notnull
 	{
 		var rows = new List<List<object?>>();
 
