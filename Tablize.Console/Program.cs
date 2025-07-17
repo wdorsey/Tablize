@@ -64,38 +64,41 @@ table.SetData(new Dictionary<string, object>
 PrintTable(table);
 
 /* list of objects as data, multi-column table */
+table.Name = "Customers";
 
 // override formatter for type int
-table.AddFormatter(new(x => Convert.ToInt32(x).ToString(), Align.Left), typeof(int));
+table.AddFormatter(new(x => Convert.ToInt32(x).ToString(), Align.Right), typeof(int));
 
 // custom money fomatter, add to column three
 var money = new Formatter(x => $"$ {Convert.ToDouble(x):N2}", Align.Right);
 
 table.SetColumns(
 [
-	new() { Name = "One" },
-	new() { Name = "Two" },
-	new() { Name = "Three", Formatter = money },
-	new() { Name = "Four" },
-	new() { Name = "Five" },
+	new() { Name = "Id" },
+	new() { Name = "Name" },
+	new() { Name = "Count" },
+	new() { Name = "Balance", Formatter = money },
+	new() { Name = "Attempts" },
+	new() { Name = "LastUpdate" },
 ]);
 
-var objs = new List<(string Name, int Count, double Avg, long? N, DateTimeOffset DateTime)>
+var objs = new List<(int Id, string Name, int Count, double Balance, long? Attempts, DateTimeOffset LastUpdate)>
 {
-	new ("One", 1, 5.42, null, DateTimeOffset.Now),
-	new ("Two", 10, 42.0, 1, DateTimeOffset.Now),
-	new ("Three", 42, 23, 32984789324, DateTimeOffset.Now),
-	new ("Four", 14889, 10.10, null, DateTimeOffset.Now),
-	new ("Five", 238974, 32.23, 69, DateTimeOffset.Now),
+	new (1, "John Smith", 1, 5.42, null, DateTimeOffset.Now),
+	new (2, "Jane Doe", 10, 42.0, 1, DateTimeOffset.Now.AddSeconds(-23894234)),
+	new (3, "John Smith", 42, 23, 32984789324, DateTimeOffset.Now.AddSeconds(-232344)),
+	new (4, "John Smith", 14889, 10.10, null, DateTimeOffset.Now.AddSeconds(-23445)),
+	new (5, "Jane Doe", 238974, 32.23, 69, DateTimeOffset.Now.AddSeconds(-333)),
 };
 
 table.SetData([.. objs.Select(x => new List<object?>
 {
+	x.Id,
 	x.Name,
 	x.Count,
-	x.Avg,
-	x.N,
-	x.DateTime
+	x.Balance,
+	x.Attempts,
+	x.LastUpdate
 })]);
 
 PrintTable(table);
