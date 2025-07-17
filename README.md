@@ -42,4 +42,4 @@ table.SetData(dataDict.Select(x => new List<object?>
 List<string> lines = table.GetLines();
 lines.ForEach(Console.WriteLine);
 ```
-<img width="315" height="135" alt="image" src="https://github.com/user-attachments/assets/1bd776a7-732b-4388-89b0-194f1c3371b2" />
+<img width="320" height="162" alt="image" src="https://github.com/user-attachments/assets/ab96a13b-adac-441d-a3a8-0bc2ceb30726" />
