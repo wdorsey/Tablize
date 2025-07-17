@@ -142,6 +142,22 @@ public record BorderCharSet(
 
 public static class Tablizer
 {
+	public static Formatter Formatter<T>(Func<T, string> formatFn, Align alignment = Align.Left)
+	{
+		return new(x => formatFn((T)x), alignment);
+	}
+
+	public static Table AddFormatter<T>(this Table table, Func<T, string> formatFn, Align alignment = Align.Left)
+	{
+		var formatter = Formatter(formatFn, alignment);
+		return table.AddFormatter<T>(formatter);
+	}
+
+	public static Table AddFormatter<T>(this Table table, Formatter formatter)
+	{
+		return table.AddFormatter(formatter, typeof(T));
+	}
+
 	public static Table AddFormatter(this Table table, Formatter formatter, Type type)
 	{
 		table.Formatters[type] = formatter;

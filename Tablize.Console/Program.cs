@@ -25,9 +25,9 @@ table.SetData(new Dictionary<int, string> { { 1234, "John Smith" } });
 // Lists allow you to create as many columns are you want,
 // so let's add another column and throw in custom formatters.
 table.SetColumns([
-	new Column { Name = "Id", Formatter = new(x => Convert.ToInt32(x).ToString(), Align.Right) },
+	new Column { Name = "Id", Formatter = Tablizer.Formatter<int>(x => x.ToString(), Align.Right) },
 	new Column { Name = "Name" },
-	new Column { Name = "SignupDate", Formatter = new(x => ((DateTime)x).ToString("MM/dd/yyyy")) }]);
+	new Column { Name = "SignupDate", Formatter = Tablizer.Formatter<DateTime>(x => x.ToString("MM/dd/yyyy")) }]);
 
 var list = new List<(int Id, string Name, DateTime SignupDate)>
 {
@@ -105,10 +105,10 @@ PrintTable(table);
 table.Name = "Customers";
 
 // override formatter for type int
-table.AddFormatter(new(x => Convert.ToInt32(x).ToString(), Align.Right), typeof(int));
+table.AddFormatter<int>(x => x.ToString(), Align.Right);
 
 // custom money fomatter, add to column three
-var money = new Formatter(x => $"$ {Convert.ToDouble(x):N2}", Align.Right);
+var money = Tablizer.Formatter<double>(x => $"$ {x:N2}", Align.Right);
 
 table.SetColumns(
 [
