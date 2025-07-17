@@ -2,9 +2,9 @@
 
 namespace Tablize;
 
-public record Table
+public record Table(string Name = "")
 {
-	public string Name { get; set; } = string.Empty;
+	public string Name { get; set; } = Name;
 	public bool ShowTableName { get; set; } = true;
 	public Align NameHeaderAlignment { get; set; } = Align.Left;
 	public bool ShowColumnNames { get; set; } = true;
@@ -17,7 +17,6 @@ public record Table
 
 	internal Dictionary<Type, Formatter> Formatters { get; } = new()
 	{
-		{ typeof(object), Tablize.Formatters.Default },
 		{ typeof(short), Tablize.Formatters.Short },
 		{ typeof(int), Tablize.Formatters.Int },
 		{ typeof(long), Tablize.Formatters.Long },
@@ -29,17 +28,18 @@ public record Table
 
 	// Key is ColumnNumber
 	internal Dictionary<int, Column> ColumnLookup { get; } = [];
-	internal List<Row> Rows { get; } = [];
+	internal Dictionary<int, Row> RowLookup { get; } = [];
 	internal List<List<object?>> UserRows { get; } = [];
 	internal List<List<string>> FormattedRows { get; } = [];
 
 	public List<Column> Columns => [.. ColumnLookup.Values];
+	public List<Row> Rows => [.. RowLookup.Values];
 }
 
-public record Column
+public record Column(string Name = "")
 {
 	public int ColumnNumber { get; internal set; }
-	public string Name { get; set; } = string.Empty;
+	public string Name { get; set; } = Name;
 	public Align NameHeaderAlignment { get; set; } = Align.Center;
 	public Align? Alignment { get; set; }
 	internal Align? AlignmentByValue { get; set; } // internal Alignment tracked by the Type of value
@@ -110,11 +110,11 @@ public static class Formatters
 {
 	// pre-defined Formatters only exist for types that require something other than .ToString() and Align.Left
 	public static Formatter Default { get; } = new(x => x?.ToString() ?? string.Empty, Align.Left);
-	public static Formatter Short { get; } = new(x => Convert.ToInt16(x).ToString("N0"), Align.Right);
-	public static Formatter Int { get; } = new(x => Convert.ToInt32(x).ToString("N0"), Align.Right);
-	public static Formatter Long { get; } = new(x => Convert.ToInt64(x).ToString("N0"), Align.Right);
-	public static Formatter Double { get; } = new(x => Convert.ToDouble(x).ToString("N2"), Align.Right);
-	public static Formatter Decimal { get; } = new(x => Convert.ToDecimal(x).ToString("N2"), Align.Right);
+	public static Formatter Short { get; } = Tablizer.Formatter<short>(x => x.ToString("N0"), Align.Right);
+	public static Formatter Int { get; } = Tablizer.Formatter<int>(x => x.ToString("N0"), Align.Right);
+	public static Formatter Long { get; } = Tablizer.Formatter<long>(x => x.ToString("N0"), Align.Right);
+	public static Formatter Double { get; } = Tablizer.Formatter<double>(x => x.ToString("N2"), Align.Right);
+	public static Formatter Decimal { get; } = Tablizer.Formatter<decimal>(x => x.ToString("N2"), Align.Right);
 }
 
 public record BorderCharSet(
@@ -173,6 +173,24 @@ public static class Tablizer
 		return table;
 	}
 
+	public static Table AddColumn(this Table table, string columnName)
+	{
+		return table.AddColumn(new Column(columnName));
+	}
+
+	public static Table AddColumn(this Table table, Column column)
+	{
+		column.ColumnNumber = table.ColumnLookup.Count + 1;
+		table.ColumnLookup.Add(column.ColumnNumber, column);
+		return table;
+	}
+
+	public static Table SetColumns(this Table table, params string[] columnNames)
+	{
+		var columns = columnNames.Select(x => new Column(x)).ToList();
+		return table.SetColumns(columns);
+	}
+
 	public static Table SetColumns(this Table table, List<Column> columns)
 	{
 		table.ColumnLookup.Clear();
@@ -181,14 +199,22 @@ public static class Tablizer
 		{
 			var col = columns[i];
 			col.ColumnNumber = i + 1;
-			col.InnerWidth = col.Name.Length;
 			table.ColumnLookup.Add(col.ColumnNumber, col);
 		}
 
 		return table.SetData(table.UserRows);
 	}
 
-	public static Table SetData<TKey, TValue>(this Table table, Dictionary<TKey, TValue> data) where TKey : notnull
+	public static Table SetData<TKey, TValue>(
+		this Table table,
+		IEnumerable<KeyValuePair<TKey, TValue>> kvps)
+		where TKey : notnull
+	{
+		return table.SetData(kvps.ToDictionary());
+	}
+
+	public static Table SetData<TKey, TValue>(this Table table, Dictionary<TKey, TValue> data)
+		where TKey : notnull
 	{
 		var rows = new List<List<object?>>();
 
@@ -200,18 +226,25 @@ public static class Tablizer
 		return table.SetData(rows);
 	}
 
-	public static Table SetData(this Table table, List<List<object?>> rows)
+	public static Table SetData(this Table table, IEnumerable<List<object?>> rows)
 	{
 		table.UserRows.Clear();
 		table.FormattedRows.Clear();
-		table.Rows.Clear();
+		table.RowLookup.Clear();
 
 		table.UserRows.AddRange(rows);
 
+		// set InnerWidth of all columns to Name.Length
+		// to initialize the starting width.
+		foreach (var col in table.Columns)
+		{
+			col.InnerWidth = col.Name.Length;
+		}
+
 		// pre-processing loop:
 		//	set default columns
+		//  find formatter and get cell value
 		//  figure out width of every column
-		//  get formatted values of each cell
 		foreach (var row in rows)
 		{
 			var formattedRow = new List<string>();
@@ -282,7 +315,7 @@ public static class Tablizer
 				table.Name, headerWidth, headerWidth,
 				paddingLeft, paddingRight, table.NameHeaderAlignment);
 
-			table.Rows.Add(new(1, [new(value, Border.All)]));
+			table.RowLookup.Add(1, new(1, [new(value, Border.All)]));
 		}
 
 		if (table.ShowColumnNames)
@@ -296,7 +329,8 @@ public static class Tablizer
 
 				cells.Add(new(value, Border.All));
 			}
-			table.Rows.Add(new(table.Rows.Count + 1, cells));
+			var rowNum = table.RowLookup.Count + 1;
+			table.RowLookup.Add(rowNum, new(rowNum, cells));
 		}
 
 		// data rows
@@ -317,7 +351,8 @@ public static class Tablizer
 
 				cells.Add(new(value, table.CellBorders));
 			}
-			table.Rows.Add(new(table.Rows.Count + 1, cells));
+			var rowNum = table.RowLookup.Count + 1;
+			table.RowLookup.Add(rowNum, new(rowNum, cells));
 		}
 
 		// ensure outside of table has borders
@@ -422,8 +457,8 @@ public static class Tablizer
 				firstPassLines.Add((bottom, true));
 		}
 
-		// final border pass to fix dupes and add intersections
-		// this code is really gnarly
+		// final border pass to remove dupes and add intersections
+		// this code is kinda gnarly
 		var prevLine = new List<char>();
 		for (int i = 0; i < firstPassLines.Count; i++)
 		{
@@ -501,7 +536,7 @@ public static class Tablizer
 		char paddingRightChar = ' ',
 		char valuePadChar = ' ')
 	{
-		// this function creates the exact final cell value trimming and padding
+		// this function creates the exact final cell value, trimming and padding
 		// based on widths and alignment.
 		if (maxWidth.HasValue && value.Length > maxWidth)
 		{

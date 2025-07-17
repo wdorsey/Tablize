@@ -10,36 +10,33 @@ For example usage, check out the [Console project](https://github.com/wdorsey/Ta
 ## Quick Start
 ```C#
 // create table
-var table = new Table { Name = "Customers" };
+var table = new Table("Customers");
 
-// set columns (optional)
-table.SetColumns([
-	new Column { Name = "Id" },
-	new Column { Name = "Name" }]);
+// set columns (optional),
+// There are several different ways to add/set columns
+table.SetColumns("Id", "Name");
 
 // set data
 // A dictionary with any key/value types works.
 // Dictionaries always create a 2-column table.
-table.SetData(new Dictionary<int, string> { { 1234, "John Smith" } });
+var dataDict = new Dictionary<int, string> { { 1234, "John Smith" }, { 2, "Jane Doe" } };
+table.SetData(dataDict);
 
 // Or use a list. Desired properties must be explicitly passed.
 // Lists allow you to create as many columns are you want,
 // so let's add another column and throw in custom formatters.
 table.SetColumns([
-	new Column { Name = "Id", Formatter = Tablizer.Formatter<int>(x => x.ToString(), Align.Right) },
-	new Column { Name = "Name" },
-	new Column { Name = "SignupDate", Formatter = Tablizer.Formatter<DateTime>(x => x.ToString("MM/dd/yyyy")) }]);
+	new Column("Id") { Formatter = Tablizer.Formatter<int>(x => x.ToString(), Align.Right) },
+	new Column("Name"),
+	new Column("SignupDate") { Formatter = Tablizer.Formatter<DateTime>(x => x.ToString("MM/dd/yyyy")) }]);
 
-var list = new List<(int Id, string Name, DateTime SignupDate)>
+// order of objects is the column order
+table.SetData(dataDict.Select(x => new List<object?>
 {
-	new(1234, "John Smith", DateTime.Now)
-};
-
-table.SetData([.. list.Select(x =>
-	new List<object?>
-	{
-		x.Id, x.Name, x.SignupDate
-	})]);
+	x.Key,       // Id 
+	x.Value,     // Name 
+	DateTime.Now // SignupDate
+}));
 
 // that's it, GetLines() and print it
 List<string> lines = table.GetLines();
