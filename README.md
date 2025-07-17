@@ -3,6 +3,8 @@ Turn any C# collection into a pretty ASCII table. Ideal for console applications
 
 <img width="787" height="210" alt="image" src="https://github.com/user-attachments/assets/9a75bead-102a-443c-985e-f02807bbbe81" />
 
+The whole library is just a single file. Grab [Tablizer.cs](https://github.com/wdorsey/Tablize/blob/master/Tablize/Tablizer.cs) to start tablizing all the things.
+
 For example usage, check out the [Console project](https://github.com/wdorsey/Tablize/blob/master/Tablize.Console/Program.cs).
 
 ## Quick Start
